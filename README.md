@@ -287,11 +287,13 @@ We're explicit about the trust model — at a hackathon, honesty *is* the differ
 
 ## 16. Implementation status (this repo) — what's real vs. simulated
 
-This repo contains a **working testnet MVP**, verified end-to-end against live Sui testnet + Walrus + Seal. The brain is a **real model** (`SmolLM2-135M-Instruct`, Q8_0 GGUF, ~145 MB) that is encrypted, stored on Walrus, sealed to the NFT, and **run locally with `node-llama-cpp`** — the model literally comes out of the NFT's blob. No hosted API is used for inference.
+This repo contains a **working testnet MVP**, verified end-to-end against live Sui testnet + Walrus + Seal. The brain is a **real model** (`SmolLM2-135M-Instruct`, Q8_0 GGUF, ~145 MB) that is encrypted and stored **only on Walrus**, sealed to the NFT, and **run with `node-llama-cpp`** — the model literally comes out of the NFT's Walrus blob on every run. No hosted API is used for inference.
+
+**Walrus is the single source of truth for the model — nothing persists on local disk.** The repo contains no model files. Minting streams the base model to an OS temp file, encrypts + uploads it to Walrus, then deletes the temp. Running fetches the encrypted blob from Walrus, decrypts in memory, and (because `node-llama-cpp`/llama.cpp loads a GGUF only by file path) writes it to a unique `os.tmpdir()` temp file that is **deleted in a `finally` block immediately after inference**.
 
 **✅ Real & verified** (each backed by a script under `scripts/`):
 - **Move package** `walnut::walnut` deployed to testnet (`AgentNFT`, `mint`, `update`, `seal_approve`, `claim_ownership`, `walnut_transfer`, Display V2). IDs in `walnut.config.json`.
-- **Encrypt → Walrus → Seal → mint**: AES-256-GCM client-side, `data_hash = sha256(plaintext)`, blob written via the Walrus upload relay, AES key threshold-sealed (2-of-2 Mysten Open key servers).
+- **Encrypt → Walrus → Seal → mint**: base model sourced transiently (streamed to OS temp, deleted after upload), AES-256-GCM encrypted, `data_hash = sha256(plaintext)`, blob written via the Walrus upload relay, AES key threshold-sealed (2-of-2 Mysten Open key servers).
 - **Owner runs the model** from the NFT (`scripts/run-agent.mjs`): Seal releases the key → Walrus `readBlob` → decrypt → verify hash → `node-llama-cpp` generates text.
 - **Non-owner denied** by `seal_approve` (incl. an authoritative `devInspect` gate proof).
 - **Kiosk sale with enforced 5% royalty** + access-follows-ownership: buyer claims ownership → buyer runs the model → seller is locked out.
@@ -309,7 +311,7 @@ node scripts/check-env.mjs     # verify PRIV_KEY address is funded (SUI + WAL)
 node scripts/get-wal.mjs 1     # (if needed) exchange 1 SUI -> WAL for Walrus storage
 node scripts/deploy.mjs        # publish package + register simulated enclave -> walnut.config.json
 node scripts/setup-policy.mjs  # create TransferPolicy<AgentNFT> + 5% royalty rule
-node scripts/mint-model.mjs    # encrypt+upload the 145MB model, mint an AgentNFT
+node scripts/mint-model.mjs    # stream model -> encrypt -> Walrus -> mint (no local copy kept)
 node scripts/run-agent.mjs "your prompt"   # owner runs the model from the NFT
 node scripts/demo.mjs          # full end-to-end story (mint → run → deny → sell → run → deny)
 ```

@@ -282,3 +282,42 @@ We're explicit about the trust model — at a hackathon, honesty *is* the differ
 ---
 
 <sub>Built on the Sui stack: Walrus · Seal · Nautilus · Sui Move (Kiosk) · zkLogin · native USDC. Walnut adapts the *semantics* of ERC-7857 (a Draft Ethereum ERC by 0G Labs) into a new Move INFT interface — it does not port the Solidity, and no canonical Sui INFT standard exists yet.</sub>
+
+---
+
+## 16. Implementation status (this repo) — what's real vs. simulated
+
+This repo contains a **working testnet MVP**, verified end-to-end against live Sui testnet + Walrus + Seal. The brain is a **real model** (`SmolLM2-135M-Instruct`, Q8_0 GGUF, ~145 MB) that is encrypted, stored on Walrus, sealed to the NFT, and **run locally with `node-llama-cpp`** — the model literally comes out of the NFT's blob. No hosted API is used for inference.
+
+**✅ Real & verified** (each backed by a script under `scripts/`):
+- **Move package** `walnut::walnut` deployed to testnet (`AgentNFT`, `mint`, `update`, `seal_approve`, `claim_ownership`, `walnut_transfer`, Display V2). IDs in `walnut.config.json`.
+- **Encrypt → Walrus → Seal → mint**: AES-256-GCM client-side, `data_hash = sha256(plaintext)`, blob written via the Walrus upload relay, AES key threshold-sealed (2-of-2 Mysten Open key servers).
+- **Owner runs the model** from the NFT (`scripts/run-agent.mjs`): Seal releases the key → Walrus `readBlob` → decrypt → verify hash → `node-llama-cpp` generates text.
+- **Non-owner denied** by `seal_approve` (incl. an authoritative `devInspect` gate proof).
+- **Kiosk sale with enforced 5% royalty** + access-follows-ownership: buyer claims ownership → buyer runs the model → seller is locked out.
+- **One-command demo**: `node scripts/demo.mjs` runs mint → run → deny → sell → new-owner run → previous-owner denied.
+
+**⚠️ Simulated / deviations (honest notes):**
+- **Nautilus is SIMULATED.** `secure_transfer` verifies an `ed25519` signature from a key registered in `EnclaveRegistry` — it is **not** a real AWS Nitro attestation (no `sui::nitro_attestation`, no PCRs). Clearly labeled in the Move source.
+- **Access gate uses a stored `owner` field, not raw object ownership.** The README's "Layer 1" pitch assumed Seal key servers enforce owned-object ownership during policy evaluation. In practice the **testnet key servers evaluate `seal_approve` via `dev_inspect`, which does *not* enforce object ownership** — but it *does* set a trustworthy `ctx.sender()` (proven by the SessionKey). So the policy gates on `nft.owner == ctx.sender()`, kept current by `claim_ownership` / `walnut_transfer` (real txs only the holder can run). Consequence: a plain `public_transfer` that bypasses these leaves the `owner` field stale until the new owner calls `claim_ownership` — which only they can. This matches the README's stated Layer-1 limitation (a prior owner loses *future* reads once the new owner claims; the strict guarantee needs the Nautilus path).
+- **`kiosk_lock_rule` omitted** (royalty rule only) so a buyer can take the item to plain ownership and run it simply; enforcing all resales-in-kiosk is a future add.
+- **zkLogin / native USDC** are not wired in this MVP (the trading demo uses SUI).
+
+### Run it
+```bash
+node scripts/check-env.mjs     # verify PRIV_KEY address is funded (SUI + WAL)
+node scripts/get-wal.mjs 1     # (if needed) exchange 1 SUI -> WAL for Walrus storage
+node scripts/deploy.mjs        # publish package + register simulated enclave -> walnut.config.json
+node scripts/setup-policy.mjs  # create TransferPolicy<AgentNFT> + 5% royalty rule
+node scripts/mint-model.mjs    # encrypt+upload the 145MB model, mint an AgentNFT
+node scripts/run-agent.mjs "your prompt"   # owner runs the model from the NFT
+node scripts/demo.mjs          # full end-to-end story (mint → run → deny → sell → run → deny)
+```
+
+### Web app
+```bash
+npm run dev        # http://localhost:3000
+```
+A minimal Next.js + `@mysten/dapp-kit` UI: connect wallet, view the demo agent card, **Run the agent** (shows generated text), a **non-owner denial** demo, your owned Walnut NFTs, and the Kiosk/royalty panel. Because `node-llama-cpp` and the Walrus/Seal decrypt must run in Node, the heavy work happens in server API routes (`pages/api/run.js` etc.) — the model literally comes out of the NFT's Walrus blob on each run.
+
+Secrets (`PRIV_KEY`, enclave/buyer keys) live in `.env.local` / `.walnut-*.json` and are gitignored; `walnut.config.json` holds only public object IDs.

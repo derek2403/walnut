@@ -11,7 +11,7 @@
   "agentType": "0x1d41edc9a7f210b65a99960ce0ba99c4ed383dba53fb56d4b437a96b817398d4::walnut::AgentNFT",
   "publishDigest": "2sg7K8zUxNpLVkD14EyGxgZ2WQgmKp8GGvryAHpDpSGw",
   "enclavePubkey": "445SA/hmJ5QdFY5SLBomxP1SLgM4Y7n5uW4VlPgV0DI=",
-  "demoNftId": "0x4765e406ccc6bd3568142323a430d35e366e5b470ba466768be6d31cbdc1ac40",
+  "demoNftId": "0xff81c25699036dde5426d20a7d257008fca64db286e945a08eeb5130bef671d9",
   "transferPolicyId": "0xc42ccc9c4eb41beea6faf158365a6074496663976d37aa840a9d90c3cd040c2e",
   "transferPolicyCapId": "0x527532f7ba5619d0dbf3f0b3e2f9362497694b159bf73b1ca539885c6b28b5ce",
   "royaltyBps": 500

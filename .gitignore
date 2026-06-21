@@ -43,7 +43,4 @@ next-env.d.ts
 # walnut deploy secrets
 .walnut-enclave.json
 move/walnut/build/
-
-# local model cache
-/models/
 .walnut-buyer.json

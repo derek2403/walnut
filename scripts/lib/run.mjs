@@ -1,12 +1,15 @@
 // Owner run-flow: pull encrypted weights from Walrus, get the key from Seal (gated by
-// ownership), decrypt, verify data_hash, then run local inference with node-llama-cpp.
-import { writeFileSync } from 'node:fs';
+// ownership), decrypt, verify data_hash, then run inference with node-llama-cpp.
+// STORAGE: Walrus is the only persistent store. The decrypted brain is written to an
+// ephemeral OS temp file (llama.cpp loads by path) and deleted right after the run.
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { suiClient, ROOT } from './env.mjs';
+import { suiClient } from './env.mjs';
 import { readBlob } from './walrus.mjs';
 import { nftSealIdHex, makeSessionKey, sealApproveTxBytes, sealDecryptKey } from './seal.mjs';
 import { aesDecrypt, sha256, toHex } from './crypto.mjs';
-import { runInference, runInferenceCached } from './infer.mjs';
+import { runInference } from './infer.mjs';
 
 export async function loadAgent(nftId) {
   const obj = await suiClient().getObject({ id: nftId, options: { showContent: true } });
@@ -40,12 +43,16 @@ export async function decryptBrain({ cfg, signer, walrus, seal, nftId }) {
   return { agent: a, brain };
 }
 
-// Full run: decrypt brain -> temp GGUF -> inference.
-export async function runAgent({ cfg, signer, walrus, seal, nftId, systemPrompt, userPrompt, cached = false }) {
+// Full run: fetch+decrypt brain from Walrus -> ephemeral OS temp GGUF -> inference ->
+// delete the temp file. Nothing about the model persists on local disk.
+export async function runAgent({ cfg, signer, walrus, seal, nftId, systemPrompt, userPrompt }) {
   const { agent, brain } = await decryptBrain({ cfg, signer, walrus, seal, nftId });
-  const tmp = join(ROOT, 'models', `.brain-${nftId.slice(0, 10)}.${agent.modelFormat}`);
+  const tmp = join(tmpdir(), `walnut-brain-${nftId.slice(2, 12)}-${process.pid}-${Date.now()}.${agent.modelFormat}`);
   writeFileSync(tmp, brain);
-  const run = cached ? runInferenceCached : runInference;
-  const text = await run({ modelPath: tmp, systemPrompt, userPrompt });
-  return { agent, text, brainBytes: brain.length };
+  try {
+    const text = await runInference({ modelPath: tmp, systemPrompt, userPrompt });
+    return { agent, text, brainBytes: brain.length };
+  } finally {
+    try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+  }
 }

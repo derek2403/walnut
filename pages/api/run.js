@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     const out = await runAgent({
       cfg, signer, walrus: walrusClient(), seal: sealClient(), nftId,
       systemPrompt: "You are Walnut, a concise research assistant living inside an NFT.",
-      userPrompt: prompt, cached: true,
+      userPrompt: prompt,
     });
     return res.json({
       text: out.text,

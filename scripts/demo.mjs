@@ -8,21 +8,21 @@
 //
 // Usage: node scripts/demo.mjs [modelPath] [--reuse <nftId>]
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { loadEnv, loadConfig, keypairFromPrivKey, suiClient, ROOT } from './lib/env.mjs';
+import { loadEnv, loadConfig, keypairFromPrivKey, suiClient } from './lib/env.mjs';
 import { walrusClient } from './lib/walrus.mjs';
 import { sealClient, nftSealIdHex, makeSessionKey, sealApproveTxBytes, sealDecryptKey } from './lib/seal.mjs';
 import { mintAgent } from './lib/walnut.mjs';
 import { loadAgent, runAgent } from './lib/run.mjs';
 import { listForSale, buyAndClaim, fundAddress } from './lib/trade.mjs';
+import { resolveModelSource, cleanupTemp, DEFAULT_MODEL } from './lib/model-source.mjs';
 import { toHex } from './lib/crypto.mjs';
 
 const args = process.argv.slice(2);
 const reuseIdx = args.indexOf('--reuse');
 const reuseNftId = reuseIdx >= 0 ? args[reuseIdx + 1] : null;
-const modelPath = args.find((a) => a.endsWith('.gguf')) || join(ROOT, 'models', 'SmolLM2-135M-Instruct-Q8_0.gguf');
+const explicitModelPath = args.find((a) => a.endsWith('.gguf')) || null;
 
 const env = loadEnv();
 const cfg = loadConfig();
@@ -56,11 +56,16 @@ if (reuseNftId) {
   idHex = nftSealIdHex(a.creator, a.nonce);
   console.log(`Reusing AgentNFT ${nftId} (${a.modelName})`);
 } else {
-  const brain = readFileSync(modelPath);
-  console.log(`Brain: ${modelPath.split('/').pop()} (${(brain.length / 1e6).toFixed(1)} MB) → encrypt → Walrus → Seal → mint`);
-  const m = await mintAgent({ cfg, signer: seller, walrus, seal: sealClient(), name: 'Research Assistant', brain, modelName: 'SmolLM2-135M-Instruct', modelFormat: 'gguf', epochs: 10 });
-  ({ nftId, idHex, aesKey } = m);
-  console.log(`Minted ${nftId}  blobId ${m.blobId}`);
+  const src = await resolveModelSource(explicitModelPath); // OS temp download, not local repo
+  try {
+    const brain = readFileSync(src.path);
+    console.log(`Brain: ${DEFAULT_MODEL.name} (${(brain.length / 1e6).toFixed(1)} MB) → encrypt → Walrus → Seal → mint`);
+    const m = await mintAgent({ cfg, signer: seller, walrus, seal: sealClient(), name: 'Research Assistant', brain, modelName: DEFAULT_MODEL.name, modelFormat: DEFAULT_MODEL.format, epochs: 10 });
+    ({ nftId, idHex, aesKey } = m);
+    console.log(`Minted ${nftId}  blobId ${m.blobId} (model now lives ONLY on Walrus)`);
+  } finally {
+    cleanupTemp(src.path, src.temp);
+  }
 }
 
 // 2. RUN as owner

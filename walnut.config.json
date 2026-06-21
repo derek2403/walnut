@@ -1,0 +1,18 @@
+{
+  "network": "testnet",
+  "packageId": "0x1d41edc9a7f210b65a99960ce0ba99c4ed383dba53fb56d4b437a96b817398d4",
+  "module": "walnut",
+  "publisherAddress": "0x49958d361b2c84b4cf9c3e2c3e2c2f1578d23a93599bbe1284eb6914f2b2a389",
+  "adminCapId": "0x7f3b77944859754ce71e2a6d13adba74f2715ab0388ec8255575b930baf6741c",
+  "enclaveRegistryId": "0x9459e964c1aec0dfa3aae0328dc0fbfbd2bf29e46c6b0e986cd5f6ba3cc0b7ba",
+  "publisherId": "0x308867a57afa235d54c689b13f2ff10f36a4d0ce21044bd30d0b0a5332c7e898",
+  "displayId": "0x41cd8ba185b29940037478976e0668041e6e37256c168ffae0ec5b58dfaed367",
+  "upgradeCapId": "0x940d76af075d02ea37274d7f75add9917c58a80b6161044433126978cf2585ab",
+  "agentType": "0x1d41edc9a7f210b65a99960ce0ba99c4ed383dba53fb56d4b437a96b817398d4::walnut::AgentNFT",
+  "publishDigest": "2sg7K8zUxNpLVkD14EyGxgZ2WQgmKp8GGvryAHpDpSGw",
+  "enclavePubkey": "445SA/hmJ5QdFY5SLBomxP1SLgM4Y7n5uW4VlPgV0DI=",
+  "demoNftId": "0x4765e406ccc6bd3568142323a430d35e366e5b470ba466768be6d31cbdc1ac40",
+  "transferPolicyId": "0xc42ccc9c4eb41beea6faf158365a6074496663976d37aa840a9d90c3cd040c2e",
+  "transferPolicyCapId": "0x527532f7ba5619d0dbf3f0b3e2f9362497694b159bf73b1ca539885c6b28b5ce",
+  "royaltyBps": 500
+}

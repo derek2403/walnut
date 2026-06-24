@@ -13,15 +13,15 @@
   "publisherId": "0xac4c0d8abbe2a2bd417bf8dc4da7aa89a8e8275c058f4e24909d2fa582180cf6",
   "displayId": "0x3bf7b0aac12a7e6e76698b04314ff460c4fc3ee9c09c8f94ba18db5bffed6186",
   "upgradeCapId": "0x5834d131b4143a227407256ab927345b4d10b7146976386994c6b14c4ea5f97c",
-  "enclaveObjectId": "PENDING — re-register after rebuilding enclave for the new package",
+  "enclaveObjectId": "0x00aa7afab6a740493fe9af35477093736e03838890708fff0bb5445cc81b6c0d",
   "registerCmds": {
     "update_pcrs": "sui client call --function update_pcrs --module enclave --package $ENCLAVE_PACKAGE_ID --type-args $ENCLAVE_TYPE_ARG --args $ENCLAVE_CONFIG_ID $CAP_ID 0x$PCR0 0x$PCR1 0x$PCR2",
     "register": "sh register_enclave.sh $ENCLAVE_PACKAGE_ID $WALNUT_PACKAGE_ID $ENCLAVE_CONFIG_ID $ENCLAVE_URL walnut ENCLAVE"
   },
   "royaltyBps": 500,
   "enclaveUrl": "http://54.83.106.174:3000",
-  "pcr0": "5d8ccbd33f90eb900e5e53b8a08e828bd40cf08fcff2ce9b184e0c8f99a862ea305f7fae7ed8dbd9a6d1c44f8f9e000e",
-  "pcr1": "5d8ccbd33f90eb900e5e53b8a08e828bd40cf08fcff2ce9b184e0c8f99a862ea305f7fae7ed8dbd9a6d1c44f8f9e000e",
+  "pcr0": "00a684db4058ffbf3955897d307df97f98984198c0fd28a5f39038fe18cf2a4c3420e517b45c608476fb42d11d63e3b3",
+  "pcr1": "00a684db4058ffbf3955897d307df97f98984198c0fd28a5f39038fe18cf2a4c3420e517b45c608476fb42d11d63e3b3",
   "pcr2": "21b9efbc184807662e966d34f390821309eeac6802309798826296bf3e8bec7c10edb30948c90ba67310f7b964fc500a",
   "transferPolicyId": "0xf3b318a697d530ad5f9235c6ec6d54728cce2e7a37816547c474b6a742e585b8",
   "transferPolicyCapId": "0xa28332143b569f0f105019517976bb23ff2aa0ec46480a710a4d88947d13c624"

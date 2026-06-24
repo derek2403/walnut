@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
+import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
+import { Transaction } from "@mysten/sui/transactions";
 
 type Agent = { id: string; name: string; modelId: string; owner: string; version: number; blobId: string };
 type Cfg = {
@@ -22,6 +23,7 @@ function Pill({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
 
 export default function Home() {
   const account = useCurrentAccount();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [name, setName] = useState("Research Assistant");
@@ -46,13 +48,33 @@ export default function Home() {
 
   async function mint() {
     if (!account) { setMintMsg("Connect a wallet first."); return; }
-    setMinting(true); setMintMsg("");
+    setMinting(true); setMintMsg("Encrypting + storing on Walrus…");
     try {
-      const r = await fetch("/api/v2/mint", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, modelId, systemPrompt, owner: account.address }) });
+      // 1) server prepares the encrypted blob (no mint) — plaintext is sealed to your wallet.
+      const r = await fetch("/api/v2/prepare-mint", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, modelId, systemPrompt, owner: account.address }) });
       const d = await r.json();
-      if (d.error) setMintMsg("⚠ " + d.error);
-      else { setMintMsg(`Minted ${short(d.nftId)} — it's yours.`); setTimeout(refresh, 1500); }
-    } catch (e) { setMintMsg("⚠ " + String(e)); } finally { setMinting(false); }
+      if (d.error) { setMintMsg("⚠ " + d.error); setMinting(false); return; }
+      // 2) YOUR wallet signs the actual mint → you are creator + owner.
+      setMintMsg("Approve the mint in your wallet…");
+      const enc = new TextEncoder();
+      const hexB = (h: string) => Array.from(Uint8Array.from((h.match(/../g) || []).map((x) => parseInt(x, 16))));
+      const b64B = (b: string) => Array.from(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+      const tx = new Transaction();
+      tx.moveCall({
+        target: `${d.packageId}::walnut::mint_to_sender`,
+        arguments: [
+          tx.pure.vector("u8", Array.from(enc.encode(d.name))),
+          tx.pure.vector("u8", Array.from(enc.encode(d.modelId))),
+          tx.pure.vector("u8", hexB(d.nonceHex)),
+          tx.pure.vector("u8", Array.from(enc.encode(d.blobId))),
+          tx.pure.vector("u8", hexB(d.dataHashHex)),
+          tx.pure.vector("u8", b64B(d.sealedKeyB64)),
+        ],
+      });
+      const res = await signAndExecute({ transaction: tx });
+      setMintMsg(`Minted — you signed it (${short(res.digest)}).`);
+      setTimeout(refresh, 2000);
+    } catch (e: unknown) { setMintMsg("⚠ " + (e instanceof Error ? e.message : String(e))); } finally { setMinting(false); }
   }
 
   async function send() {

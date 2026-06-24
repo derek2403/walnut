@@ -51,6 +51,27 @@ export async function mintAgentV2({ cfg, signer, walrus, seal, name, modelId, br
   return { nftId, idHex, aesKey, nonce, dataHash, blobId, creator, digest: res.digest };
 }
 
+// Prepare a mint WITHOUT signing it: encrypt the config brain, upload the ciphertext to Walrus
+// (storage paid by `signer` = deployer/PRIV_KEY), and Seal-seal the AES key to `ownerAddress`
+// (the connected wallet). Returns the args the WALLET will pass to mint_to_sender — so the
+// user signs the actual on-chain mint and becomes creator + owner. PRIV_KEY never mints.
+export async function prepareMintV2({ cfg, signer, walrus, seal, modelId, brain, ownerAddress, epochs = 5 }) {
+  const aesKey = newAesKey();
+  const nonce = randomBytes(16);
+  const plaintext = Buffer.from(JSON.stringify(brain));
+  const dataHash = sha256(plaintext);
+  const encrypted = aesEncrypt(plaintext, aesKey);
+  const { blobId } = await writeEncryptedBlob(walrus, encrypted, signer, epochs); // storage subsidy
+  const idHex = nftSealIdHex(ownerAddress, nonce); // sealed to the connected wallet (= future owner)
+  const sealed = await sealEncryptKey(seal, cfg.packageId, idHex, aesKey);
+  return {
+    nonceHex: Buffer.from(nonce).toString('hex'),
+    blobId,
+    dataHashHex: Buffer.from(dataHash).toString('hex'),
+    sealedKeyB64: Buffer.from(sealed).toString('base64'),
+  };
+}
+
 // Load an AgentNFT v2 (config-brain fields).
 export async function loadAgentV2(nftId) {
   const obj = await suiClient().getObject({ id: nftId, options: { showContent: true } });

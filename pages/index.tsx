@@ -1,116 +1,227 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
 
-type AgentCard = { id: string; name: string; model: string; format: string; version: number; blobId: string; owner: string };
-type Cfg = { network: string; packageId: string; agentType: string; demoNftId?: string; transferPolicyId?: string; royaltyBps?: number; ownerAddress?: string };
+type Agent = { id: string; name: string; modelId: string; owner: string; version: number; blobId: string };
+type Cfg = {
+  network: string; walnutPackageId: string; agentType: string;
+  enclaveObjectId: string | null; teeUrl: string | null; models: { id: string; name: string }[];
+};
 
 const short = (s?: string, n = 6) => (s ? `${s.slice(0, n + 2)}…${s.slice(-4)}` : "");
 const obj = (id?: string) => `https://suiscan.xyz/testnet/object/${id}`;
+const avatar = (id: string) => `https://api.dicebear.com/9.x/bottts/svg?seed=${id}`;
+
+function Pill({ ok, children }: { ok?: boolean; children: React.ReactNode }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${ok ? "bg-[#e7f0e9] text-[#3f7a52]" : "bg-[#f0ede4] text-[#8a8578]"}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-[#4f9d6b]" : "bg-[#bdb7a8]"}`} />
+      {children}
+    </span>
+  );
+}
 
 export default function Home() {
   const account = useCurrentAccount();
   const [cfg, setCfg] = useState<Cfg | null>(null);
-  const [agent, setAgent] = useState<AgentCard | null>(null);
-  const [prompt, setPrompt] = useState("In one sentence, what makes you special?");
-  const [output, setOutput] = useState<string>("");
-  const [running, setRunning] = useState(false);
-  const [meta, setMeta] = useState<string>("");
-  const [denial, setDenial] = useState<string>("");
-  const [denying, setDenying] = useState(false);
-  const [myNfts, setMyNfts] = useState<AgentCard[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [name, setName] = useState("Research Assistant");
+  const [modelId, setModelId] = useState("smollm2-135m");
+  const [systemPrompt, setSystemPrompt] = useState("You are a concise research assistant. Be precise and cite sources.");
+  const [minting, setMinting] = useState(false);
+  const [mintMsg, setMintMsg] = useState("");
+  const [selected, setSelected] = useState<Agent | null>(null);
+  const [message, setMessage] = useState("Introduce yourself in one sentence.");
+  const [thread, setThread] = useState<{ role: "you" | "agent"; text: string }[]>([]);
+  const [chatting, setChatting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const chatEnd = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetch("/api/agent").then((r) => r.json()).then((d) => { setCfg(d.config); setAgent(d.agent); }).catch(() => {});
-  }, []);
-  useEffect(() => {
-    if (!account?.address) { setMyNfts([]); return; }
-    fetch(`/api/nfts?address=${account.address}`).then((r) => r.json()).then((d) => setMyNfts(d.nfts || [])).catch(() => {});
-  }, [account?.address]);
+  useEffect(() => { fetch("/api/v2/config").then((r) => r.json()).then(setCfg).catch(() => {}); }, []);
+  const refresh = () => {
+    if (!account?.address) { setAgents([]); return; }
+    fetch(`/api/v2/agents?address=${account.address}`).then((r) => r.json()).then((d) => setAgents(d.agents || [])).catch(() => {});
+  };
+  useEffect(refresh, [account?.address]);
+  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [thread, chatting]);
 
-  async function runAgent() {
-    setRunning(true); setOutput(""); setMeta("");
+  async function mint() {
+    if (!account) { setMintMsg("Connect a wallet first."); return; }
+    setMinting(true); setMintMsg("");
     try {
-      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ as: "owner", prompt }) });
+      const r = await fetch("/api/v2/mint", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, modelId, systemPrompt, owner: account.address }) });
       const d = await r.json();
-      if (d.error) setOutput("⚠ " + d.error);
-      else { setOutput(d.text); setMeta(`${d.model} · v${d.version} · ${(d.brainBytes / 1e6).toFixed(0)}MB decrypted from Walrus · ${(d.ms / 1000).toFixed(1)}s`); }
-    } catch (e) { setOutput("⚠ " + String(e)); } finally { setRunning(false); }
+      if (d.error) setMintMsg("⚠ " + d.error);
+      else { setMintMsg(`Minted ${short(d.nftId)} — it's yours.`); setTimeout(refresh, 1500); }
+    } catch (e) { setMintMsg("⚠ " + String(e)); } finally { setMinting(false); }
   }
-  async function tryDenial() {
-    setDenying(true); setDenial("");
+
+  async function send() {
+    if (!selected || !message.trim()) return;
+    const mine = message.trim();
+    setThread((t) => [...t, { role: "you", text: mine }]); setMessage(""); setChatting(true);
     try {
-      const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ as: "stranger" }) });
+      const r = await fetch("/api/v2/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ nftId: selected.id, message: mine }) });
       const d = await r.json();
-      setDenial(d.denied ? `✓ Denied — Seal refused the key (${d.reason}). seal_approve saw a non-owner.` : `⚠ ${d.note || "not denied"}`);
-    } catch (e) { setDenial("⚠ " + String(e)); } finally { setDenying(false); }
+      const reply = d.reply || d.response?.data?.reply || (d.pending ? `⏳ ${d.note}` : d.error ? `⚠ ${d.error}` : JSON.stringify(d));
+      setThread((t) => [...t, { role: "agent", text: reply }]);
+    } catch (e) { setThread((t) => [...t, { role: "agent", text: "⚠ " + String(e) }]); } finally { setChatting(false); }
   }
+
+  const curl = (a: Agent) =>
+    `# 1) prove ownership → TEE bearer token\n` +
+    `curl -X POST ${cfg?.teeUrl || "$TEE_URL"}/v1/auth/challenge \\\n  -d '{"nftId":"${a.id}","address":"${account?.address || "0xYOU"}"}'\n` +
+    `# sign the nonce with your wallet, then:\n` +
+    `curl -X POST ${cfg?.teeUrl || "$TEE_URL"}/v1/agents/${a.id}/chat \\\n  -H "Authorization: Bearer <token>" -d '{"message":"hello"}'`;
+
+  const fieldCls = "w-full rounded-xl border border-[#e3e0d6] bg-[#fcfbf7] px-3.5 py-2.5 text-sm text-[#26241f] placeholder-[#a8a294] outline-none focus:border-[#d97757] focus:ring-2 focus:ring-[#d97757]/20 transition";
+  const card = "rounded-2xl border border-[#ece9e0] bg-white shadow-[0_1px_2px_rgba(60,50,40,0.04),0_8px_24px_-12px_rgba(60,50,40,0.10)]";
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
-      <div className="mx-auto max-w-3xl px-6 py-10">
-        <header className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-semibold">🌰 Walnut</h1>
-            <p className="text-sm text-zinc-400">Intelligent NFT for Sui — own the brain, not the picture.</p>
+    <div className="min-h-screen bg-[#faf9f5] text-[#26241f] antialiased" style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" }}>
+      {/* Nav */}
+      <header className="sticky top-0 z-10 border-b border-[#ece9e0] bg-[#faf9f5]/80 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#5c4636] text-lg">🌰</span>
+            <div className="leading-tight">
+              <div className="font-semibold tracking-tight">Walnut</div>
+              <div className="text-[11px] text-[#8a8578]">Intelligent NFTs · Sui</div>
+            </div>
           </div>
           <ConnectButton />
-        </header>
+        </div>
+      </header>
 
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 mb-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-medium">Demo agent</h2>
-            {cfg && <span className="text-xs text-zinc-500">{cfg.network}</span>}
+      <main className="mx-auto max-w-5xl px-6 pb-24 pt-10">
+        {/* Hero */}
+        <section className="mb-10">
+          <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-[#1f1e1c] sm:text-[2.5rem]">
+            Own the brain, not the picture.
+          </h1>
+          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-[#6b6862]">
+            Mint an AI agent whose private system prompt is encrypted on Walrus, sealed to you, and run inside a Nautilus TEE. Own it, talk to it, sell it.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Pill ok>{cfg?.network || "testnet"}</Pill>
+            <Pill ok={!!cfg?.enclaveObjectId}>{cfg?.enclaveObjectId ? "enclave attested" : "enclave pending"}</Pill>
+            <Pill ok={!!cfg?.teeUrl}>{cfg?.teeUrl ? "TEE connected" : "TEE not set"}</Pill>
           </div>
-          {agent ? (
-            <div className="mt-3 grid grid-cols-2 gap-y-1 text-sm">
-              <span className="text-zinc-400">Name</span><span>{agent.name}</span>
-              <span className="text-zinc-400">Model</span><span>{agent.model} ({agent.format})</span>
-              <span className="text-zinc-400">Version</span><span>v{agent.version}</span>
-              <span className="text-zinc-400">NFT</span><a className="text-emerald-400 hover:underline" href={obj(agent.id)} target="_blank" rel="noreferrer">{short(agent.id)}</a>
-              <span className="text-zinc-400">Walrus blob</span><span className="truncate">{short(agent.blobId, 8)}</span>
-              <span className="text-zinc-400">Owner</span><span>{short(agent.owner)}</span>
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-5">
+          {/* Mint */}
+          <section className={`${card} p-6 lg:col-span-2`}>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[#8a8578]">Mint an agent</h2>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#6b6862]">Name</label>
+                <input value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#6b6862]">Hosted model</label>
+                <select value={modelId} onChange={(e) => setModelId(e.target.value)} className={fieldCls}>
+                  {(cfg?.models || [{ id: "smollm2-135m", name: "SmolLM2-135M-Instruct" }]).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#6b6862]">System prompt <span className="text-[#b6b0a2]">· private, encrypted</span></label>
+                <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} rows={4} className={`${fieldCls} resize-none`} />
+              </div>
+              <button onClick={mint} disabled={minting || !account} className="w-full rounded-xl bg-[#d97757] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#c96544] disabled:cursor-not-allowed disabled:opacity-50">
+                {minting ? "Minting…" : account ? "Mint agent" : "Connect wallet to mint"}
+              </button>
+              {mintMsg && <p className="text-sm text-[#6b6862]">{mintMsg}</p>}
             </div>
-          ) : <p className="mt-3 text-sm text-zinc-500">Loading… (run <code>npm run walnut:mint</code> if none)</p>}
+          </section>
+
+          {/* Agents + Chat */}
+          <div className="space-y-6 lg:col-span-3">
+            <section className={`${card} p-6`}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-[#8a8578]">Your agents</h2>
+                {account && <span className="text-xs text-[#a8a294]">{short(account.address)}</span>}
+              </div>
+              {!account ? (
+                <p className="mt-4 text-sm text-[#8a8578]">Connect a wallet to see your agents.</p>
+              ) : agents.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-[#e3e0d6] bg-[#fcfbf7] p-6 text-center text-sm text-[#8a8578]">No agents yet — mint your first one.</div>
+              ) : (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {agents.map((a) => (
+                    <button key={a.id} onClick={() => { setSelected(a); setThread([]); }} className={`group flex items-center gap-3 rounded-xl border p-3 text-left transition ${selected?.id === a.id ? "border-[#d97757] bg-[#fdf3ef]" : "border-[#ece9e0] bg-[#fcfbf7] hover:border-[#d8d3c6]"}`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={avatar(a.id)} alt="" width={44} height={44} className="rounded-lg bg-white ring-1 ring-[#ece9e0]" />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-[#26241f]">{a.name}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <span className="rounded-md bg-[#f0ede4] px-1.5 py-0.5 text-[10px] font-medium text-[#7a7568]">{a.modelId}</span>
+                          <span className="text-[10px] text-[#a8a294]">v{a.version}</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {selected && (
+              <section className={`${card} overflow-hidden`}>
+                <div className="flex items-center gap-3 border-b border-[#ece9e0] px-5 py-3.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={avatar(selected.id)} alt="" width={36} height={36} className="rounded-lg ring-1 ring-[#ece9e0]" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">{selected.name}</div>
+                    <a href={obj(selected.id)} target="_blank" rel="noreferrer" className="text-[11px] text-[#a8a294] hover:text-[#d97757]">{short(selected.id)} ↗</a>
+                  </div>
+                  <button onClick={() => setSelected(null)} className="ml-auto text-xs text-[#a8a294] hover:text-[#6b6862]">close</button>
+                </div>
+
+                <div className="max-h-80 space-y-3 overflow-y-auto px-5 py-4">
+                  {thread.length === 0 && <p className="py-6 text-center text-xs text-[#a8a294]">The enclave verifies you own this agent, decrypts its prompt in-TEE, and replies. {cfg?.teeUrl ? "" : "(Set TEE_URL to go live.)"}</p>}
+                  {thread.map((m, i) => (
+                    <div key={i} className={`flex ${m.role === "you" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm ${m.role === "you" ? "bg-[#d97757] text-white" : "border border-[#ece9e0] bg-[#fcfbf7] text-[#26241f]"}`}>{m.text}</div>
+                    </div>
+                  ))}
+                  {chatting && <div className="flex justify-start"><div className="rounded-2xl border border-[#ece9e0] bg-[#fcfbf7] px-3.5 py-2 text-sm text-[#a8a294]">thinking…</div></div>}
+                  <div ref={chatEnd} />
+                </div>
+
+                <div className="border-t border-[#ece9e0] p-3">
+                  <div className="flex items-end gap-2">
+                    <textarea value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="Message your agent…" className={`${fieldCls} resize-none`} />
+                    <button onClick={send} disabled={chatting} className="shrink-0 rounded-xl bg-[#d97757] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#c96544] disabled:opacity-50">Send</button>
+                  </div>
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-[11px] text-[#a8a294] hover:text-[#6b6862]">Use as an API</summary>
+                    <div className="relative mt-2">
+                      <button onClick={() => { navigator.clipboard?.writeText(curl(selected)); setCopied(true); setTimeout(() => setCopied(false), 1200); }} className="absolute right-2 top-2 rounded-md bg-[#26241f] px-2 py-0.5 text-[10px] text-white/80 hover:text-white">{copied ? "copied" : "copy"}</button>
+                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-xl bg-[#26241f] p-3 pr-14 text-[11px] leading-relaxed text-[#e8e4da]">{curl(selected)}</pre>
+                    </div>
+                  </details>
+                </div>
+              </section>
+            )}
+          </div>
+        </div>
+
+        {/* Marketplace */}
+        <section className={`${card} mt-6 p-6`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[#8a8578]">Marketplace</h2>
+            <span className="rounded-full bg-[#f0ede4] px-2.5 py-1 text-xs text-[#8a8578]">5% royalty · Kiosk</span>
+          </div>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[#6b6862]">
+            List an agent at a price via Kiosk + TransferPolicy. On sale, ownership flips, the enclave re-encrypts the brain to the buyer, and access follows them — the seller is locked out. <span className="text-[#a8a294]">Verified on-chain; in-app trading lands with the enclave.</span>
+          </p>
         </section>
 
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 mb-6">
-          <h2 className="font-medium mb-1">Run the agent</h2>
-          <p className="text-xs text-zinc-500 mb-3">The model weights are pulled from Walrus, the AES key is released by Seal <em>only because the owner passes seal_approve</em>, decrypted, and run locally with node-llama-cpp (server-side). First run loads the 145MB model (~30s); later runs are fast.</p>
-          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} className="w-full rounded-lg bg-zinc-800 border border-zinc-700 p-2 text-sm" />
-          <button onClick={runAgent} disabled={running} className="mt-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium">
-            {running ? "Running…" : "Run agent"}
-          </button>
-          {output && <div className="mt-3 rounded-lg bg-black/40 border border-zinc-800 p-3 text-sm whitespace-pre-wrap">🧠 {output}</div>}
-          {meta && <p className="mt-2 text-xs text-zinc-500">{meta}</p>}
-        </section>
-
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 mb-6">
-          <h2 className="font-medium mb-1">Ownership = access</h2>
-          <p className="text-xs text-zinc-500 mb-3">A fresh, non-owner key tries to decrypt the same brain. Seal&apos;s key servers evaluate seal_approve and refuse.</p>
-          <button onClick={tryDenial} disabled={denying} className="rounded-lg bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 px-4 py-2 text-sm font-medium">
-            {denying ? "Trying…" : "Try to run as a non-owner"}
-          </button>
-          {denial && <p className="mt-3 text-sm">{denial}</p>}
-        </section>
-
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 mb-6">
-          <h2 className="font-medium mb-2">Your Walnut NFTs</h2>
-          {!account ? <p className="text-sm text-zinc-500">Connect a wallet to see your agents.</p>
-            : myNfts.length === 0 ? <p className="text-sm text-zinc-500">No Walnut NFTs at {short(account.address)}.</p>
-            : <ul className="text-sm space-y-1">{myNfts.map((n) => <li key={n.id}><a className="text-emerald-400 hover:underline" href={obj(n.id)} target="_blank" rel="noreferrer">{n.name}</a> — {n.model} v{n.version}</li>)}</ul>}
-        </section>
-
-        <section className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 mb-6">
-          <h2 className="font-medium mb-1">Trade with enforced royalty</h2>
-          <p className="text-xs text-zinc-500">Walnut trades via Kiosk + TransferPolicy ({cfg?.royaltyBps ? cfg.royaltyBps / 100 : 5}% creator royalty). After a sale the buyer calls claim_ownership and access follows them — the seller is locked out. Verified end-to-end by <code>npm run walnut:demo</code>.</p>
-          {cfg?.transferPolicyId && <a className="text-emerald-400 hover:underline text-xs" href={obj(cfg.transferPolicyId)} target="_blank" rel="noreferrer">TransferPolicy ↗</a>}
-        </section>
-
-        <footer className="text-xs text-zinc-600 pt-2">
-          {cfg && <a className="hover:underline" href={`https://suiscan.xyz/testnet/object/${cfg.packageId}`} target="_blank" rel="noreferrer">package {short(cfg.packageId)}</a>}
-          <span className="mx-2">·</span>Nautilus re-encryption is simulated (see README §16).
+        <footer className="mt-10 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#a8a294]">
+          {cfg && <a className="hover:text-[#d97757]" href={obj(cfg.walnutPackageId)} target="_blank" rel="noreferrer">walnut package {short(cfg.walnutPackageId)} ↗</a>}
+          {cfg?.enclaveObjectId && <a className="hover:text-[#d97757]" href={obj(cfg.enclaveObjectId)} target="_blank" rel="noreferrer">enclave {short(cfg.enclaveObjectId)} ↗</a>}
+          <span>Walrus · Seal · Nautilus · Kiosk</span>
         </footer>
-      </div>
+      </main>
     </div>
   );
 }

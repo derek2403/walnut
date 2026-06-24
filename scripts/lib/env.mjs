@@ -59,6 +59,13 @@ export function loadConfig() {
   return JSON.parse(readFileSync(join(ROOT, 'walnut.config.json'), 'utf8'));
 }
 
+// v2 (Nautilus TEE + config-brain). Normalizes to { packageId } so the shared seal/walrus
+// helpers (which expect cfg.packageId) work unchanged against the v2 walnut package.
+export function loadConfigV2() {
+  const c = JSON.parse(readFileSync(join(ROOT, 'walnut.v2.config.json'), 'utf8'));
+  return { ...c, packageId: c.walnutPackageId };
+}
+
 export function suiClient() {
   return new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(NETWORK) });
 }

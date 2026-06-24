@@ -4,7 +4,6 @@
 > AI agents are becoming **valuable, private, evolving assets** — a tuned system prompt, a persona, months of memory, sometimes the weights themselves. But you can't *own* that today. A normal NFT points at **public** JSON; the moment you make the agent tradeable you either **expose its intelligence** to everyone or hand it to a **custodian**. **Walnut is an Intelligent NFT (INFT): the agent's private brain is encrypted on Walrus, sealed to whoever owns the token, re-encrypted to the new owner by a Nautilus TEE on every transfer, and run with on-chain provenance — so you can own, sell, license, and *evolve* a real agent, not a pointer to a JPEG.**
 
 **Sui Overflow** · built end-to-end on the **Sui stack** — **Walrus** · **Seal** · **Nautilus** · **Sui Move / Kiosk** · **zkLogin** · **native USDC**
-*Fits the **AI**, **Programmable Storage (Walrus)**, and **Payments** tracks — map these to the live Overflow track names.*
 
 *(**Walnut** = a hard **shell** (Seal encryption) around a valuable **kernel** (the agent's intelligence), stored on **Walrus**.)*
 
@@ -18,7 +17,7 @@ An AI agent's value lives in things you **cannot put on-chain in the clear**: it
 - **Custodial** — keep the brain on a company server and sell a *receipt*. Now a platform can read it, clone it, censor it, or vanish. You don't own anything you can hold.
 - **Pointer rot** — even "real" NFT metadata is just a mutable URL. You own a token that points at JSON someone else can change or take down. **You own the pointer, not the data.**
 
-There is **no way to truly own a private, transferable, evolving agent.** ERC-7857 (0G Labs) named this problem on Ethereum. **Walnut answers it natively on Sui** — where the storage layer (Walrus), the encryption/access layer (Seal), and the verifiable-compute layer (Nautilus) already exist as first-class, mainnet-live infrastructure.
+There is **no way to truly own a private, transferable, evolving agent.** ERC-7857 named this problem on Ethereum. **Walnut answers it natively on Sui** — where the storage layer (Walrus), the encryption/access layer (Seal), and the verifiable-compute layer (Nautilus) already exist as first-class, mainnet-live infrastructure.
 
 ---
 
@@ -26,7 +25,7 @@ There is **no way to truly own a private, transferable, evolving agent.** ERC-78
 
 > An **Intelligent NFT** is an NFT where the *metadata is an actual AI agent* — model reference, system prompt, persona, memory — and that intelligence is **encrypted, owned, and transferable**, not public.
 
-ERC-7857 ("AI Agents NFT with Private Metadata", a **Draft** Ethereum ERC by 0G Labs) defines the semantics:
+ERC-7857 ("AI Agents NFT with Private Metadata", a **Draft** Ethereum ERC) defines the semantics:
 
 | Requirement | What it means |
 |---|---|
@@ -108,26 +107,6 @@ On Ethereum, ERC-7857 has to *invent* the oracle, the storage, and the access la
 
 ---
 
-## 6. ERC-7857 → Sui mapping
-
-Every ERC-7857 requirement, mapped to a concrete Sui solution, tagged by how solid it is today.
-**✅ = mainnet-live primitives · 🔵 = buildable integration of live primitives.**
-
-| ERC-7857 requirement | Walnut on Sui | Status |
-|---|---|---|
-| Encrypted metadata on-chain = `{dataHash, sealedKey, encryptedURI}` | AES-256-GCM ciphertext on **Walrus**; object stores `walrus_blob_id` + `data_hash` + Seal `sealed_key_ref` | ✅ |
-| Verifiable ownership of the **data**, not a pointer | Walrus blobId is a content hash (re-hashed on read) + on-chain `data_hash`; optional **Nautilus** attestation of plaintext knowledge | 🔵 |
-| Secure transfer w/ oracle re-encryption + verified proof | **(A)** Seal access follows ownership — new owner decrypts, no re-encryption. **(B)** strict: **Nautilus** TEE re-encrypts + `enclave::verify_signature` before ownership flips | 🔵 |
-| Sealed key to recipient | Seal IBE seals the key to an identity gated by **ownership** of the NFT (= the recipient, post-transfer) | 🔵 |
-| `authorizeUsage` / delegate without transfer | a Move **capability object** or a `seal_approve` allowlist → a **Sealed-Executor** Nautilus enclave runs inference; user never sees the object or plaintext | 🔵 |
-| `clone` | a Move `clone()` mints a new `AgentNFT`, re-keys the blob under a new identity/policy | 🔵 |
-| Dynamic / updatable metadata | owner-only `update()` → new Walrus blob + `data_hash`, bump `version`; live memory in **dynamic fields**; **Display V2** renders it | ✅ |
-| Oracle types `{TEE, ZKP}` | **TEE via Nautilus**, attestation verified on-chain by native `sui::nitro_attestation` (no production ZKP-oracle path on Sui) | 🔵 |
-| Standalone, chain-agnostic interface (not ERC-721) | a fresh **Move INFT module**, `key + store`, zero approval surface | ✅ |
-| *(implied)* enforced creator royalties | **Kiosk + TransferPolicy** (`royalty_rule` + `kiosk_lock_rule`) | ✅ |
-
----
-
 ## 7. The heart: secure transfer (Seal + Nautilus)
 
 INFTs live or die on one question — **when you sell the agent, does the buyer get the brain and does the seller lose it?** Walnut answers in two layers:
@@ -173,42 +152,6 @@ The same Nautilus enclave also gives **verifiable execution**: run the agent ins
 
 ---
 
-## 9. Data model (Move sketch)
-
-> Illustrative — not yet a deployed package. Verify framework signatures (Display V2, Kiosk) against the current `sui-framework` before building.
-
-```move
-public struct AgentNFT has key, store {
-    id: UID,
-    name: String,
-    walrus_blob_id: String,   // the encrypted brain on Walrus (the "encryptedURI")
-    data_hash: vector<u8>,    // commitment to the PLAINTEXT (verifiable ownership of data)
-    sealed_key_ref: vector<u8>, // Seal-encrypted AES key reference
-    version: u64,             // bumped on every update() — the agent evolves
-    // live, growing memory attached as dynamic fields (gas only when touched):
-    //   dynamic_field::add(&mut self.id, b"memory", slice)
-}
-
-/// Seal policy: release the decryption key ONLY to the current owner of this NFT.
-entry fun seal_approve(id: vector<u8>, nft: &AgentNFT, ctx: &TxContext) {
-    assert!(is_owner(nft, tx_context::sender(ctx)), ENotOwner);
-    // (Seal key servers dry-run this against latest chain state at fetch_key time)
-}
-
-/// Owner-only: the agent learns. New encrypted blob → new hash → bump version.
-entry fun update(nft: &mut AgentNFT, new_blob_id: String, new_hash: vector<u8>) { /* ... */ }
-
-/// Strict ERC-7857 transfer: only flips ownership after the Nautilus enclave attests
-/// it re-encrypted the brain to `to`.
-entry fun secure_transfer(nft: AgentNFT, to: address, enclave: &Enclave<WALNUT>,
-                          payload: vector<u8>, sig: vector<u8>, ts: u64) {
-    assert!(enclave::verify_signature(enclave, INTENT_REENCRYPT, ts, payload, sig), EBadProof);
-    /* update data_hash + sealed_key_ref from payload, then transfer::public_transfer(nft, to) */
-}
-```
-
----
-
 ## 10. Trust & limits (what Walnut does **not** claim)
 
 We're explicit about the trust model — at a hackathon, honesty *is* the differentiator.
@@ -221,30 +164,6 @@ We're explicit about the trust model — at a hackathon, honesty *is* the differ
 - **No x402 on Sui.** x402 isn't on Coinbase CDP's supported-network list; its gasless leg leans on EVM EIP-3009. Walnut uses **direct Move USDC transfers + object-gating** instead.
 - **Walrus availability is bounded by paid epochs.** A lapsed/un-renewed blob = a permanently un-decryptable agent. Storage lifecycle must be tied to ownership + auto-renewal.
 - **We are not "first agent NFT on Sui."** ConvictionFi, Walrus-Agents, and Talus predate us — but they store agent data **in the clear**. Walnut's claim is **private, ownership-following, transferable intelligence**.
-
----
-
-## 11. Prior art & what Walnut adds
-
-| Project | What it does | What it's missing |
-|---|---|---|
-| **ERC-7857 / 0G** | the INFT standard (encrypted metadata + oracle re-encryption) | EVM / 0G-chain only — **not on Sui** |
-| **ConvictionFi** (Sui Overflow '25) | mints a DeFAI agent as an NFT, params on Walrus | metadata is **plaintext/public**, no Seal |
-| **Walrus-Agents** | agents as NFTs, weights on Walrus | training-focused; **no private transferable brain** |
-| **Talus / Nexus** | agents as on-chain Move objects | workflow objects, **not encrypted-metadata INFTs** |
-| **Atoma / Nautilus** | TEE inference / verifiable compute | the **compute layer** an INFT calls, not the NFT |
-
-> **Walnut's wedge:** the first **ERC-7857-equivalent INFT on Sui** — a reusable **Move INFT standard** where the agent's **private** intelligence is **Seal-gated on Walrus**, **follows ownership**, can be **re-encrypted by a Nautilus oracle on transfer**, **rented without transfer**, **cloned**, and **evolved**. All the pieces are live; **nobody has wired them into one transferable, private, intelligent asset.**
-
----
-
-## 12. Demo (≤ 3 min)
-
-1. **Mint** an agent (a tuned "research assistant") → it's a Sui object you own; its brain is encrypted on Walrus, key sealed to the token.
-2. **Run it** → output is produced inside a Nautilus enclave and the chain verifies the provenance signature — *the weights never appear*.
-3. **Try to read the brain without owning it** → Seal refuses to release the key (show the `seal_approve` denial). Buy the NFT via Kiosk (royalty auto-paid) → **now** decryption succeeds. *Ownership = access.*
-4. **Evolve it** → `update()` writes new memory, bumps `version`, the wallet card reflects it live.
-5. **Strict transfer** → Nautilus re-encrypts to the new owner and the Move contract verifies the attestation before ownership flips → the seller is cryptographically locked out of future state.
 
 ---
 
@@ -277,49 +196,57 @@ We're explicit about the trust model — at a hackathon, honesty *is* the differ
 
 ## 15. One-liner
 
-> **Walnut is the Intelligent NFT for Sui — an AI agent whose private brain is encrypted on Walrus, sealed by Seal to whoever owns the token, re-encrypted to the new owner by a Nautilus TEE on transfer, and run with on-chain provenance — so for the first time you can truly own, sell, license, and evolve an agent instead of a pointer to public JSON.**
+> **Walnut is the Intelligent NFT for Sui — pick a hosted model, give it a private system prompt + persona, and mint it as an agent you truly own. The brain is encrypted on Walrus and sealed by Seal to the token holder; you *talk to your NFT* through an owner-gated AWS Nitro (Nautilus) TEE that decrypts and runs it without ever leaking the prompt; and you can list, sell, and re-own agents on a Kiosk marketplace with enforced royalties — re-encrypted to the buyer by the TEE on transfer.**
 
 ---
 
-<sub>Built on the Sui stack: Walrus · Seal · Nautilus · Sui Move (Kiosk) · zkLogin · native USDC. Walnut adapts the *semantics* of ERC-7857 (a Draft Ethereum ERC by 0G Labs) into a new Move INFT interface — it does not port the Solidity, and no canonical Sui INFT standard exists yet.</sub>
+<sub>Built on the Sui stack: Walrus · Seal · Nautilus · Sui Move (Kiosk) · zkLogin · native USDC. Walnut adapts the *semantics* of ERC-7857 (a Draft Ethereum ERC) into a new Move INFT interface — it does not port the Solidity, and no canonical Sui INFT standard exists yet.</sub>
 
 ---
 
-## 16. Implementation status (this repo) — what's real vs. simulated
+## 16. Final outcome (v2) — what Walnut is
 
-This repo contains a **working testnet MVP**, verified end-to-end against live Sui testnet + Walrus + Seal. The brain is a **real model** (`SmolLM2-135M-Instruct`, Q8_0 GGUF, ~145 MB) that is encrypted and stored **only on Walrus**, sealed to the NFT, and **run with `node-llama-cpp`** — the model literally comes out of the NFT's Walrus blob on every run. No hosted API is used for inference.
+Walnut is an **ERC-7857-style Intelligent NFT on Sui** — fully Sui-native, no EVM dependencies. An agent's **private brain = its config** (system prompt + persona + memory), encrypted on **Walrus** and **Seal**-sealed to the token owner. The **model is hosted and runs inside a real AWS Nitro Enclave (Nautilus)**, so the prompt is decrypted and executed in a TEE and never leaks. Agents are **minted, used, and traded** by anyone.
 
-**Walrus is the single source of truth for the model — nothing persists on local disk.** The repo contains no model files. Minting streams the base model to an OS temp file, encrypts + uploads it to Walrus, then deletes the temp. Running fetches the encrypted blob from Walrus, decrypts in memory, and (because `node-llama-cpp`/llama.cpp loads a GGUF only by file path) writes it to a unique `os.tmpdir()` temp file that is **deleted in a `finally` block immediately after inference**.
+### What a user can do
+1. **Mint** — pick a hosted model from a dropdown, write a system prompt/persona, and mint. The app encrypts the config → Walrus → seals the key (Seal) → `mint`s the `AgentNFT`. (zkLogin/Enoki optional for wallet-less onboarding.)
+2. **Use (talk to your NFT)** — chat with your agent in the web UI, *or* hit its API directly. Every NFT is an addressable agent endpoint.
+3. **Trade** — list an agent at a price on the **Kiosk marketplace**; buying transfers ownership (royalty auto-paid) and access follows the new owner.
 
-**✅ Real & verified** (each backed by a script under `scripts/`):
-- **Move package** `walnut::walnut` deployed to testnet (`AgentNFT`, `mint`, `update`, `seal_approve`, `claim_ownership`, `walnut_transfer`, Display V2). IDs in `walnut.config.json`.
-- **Encrypt → Walrus → Seal → mint**: base model sourced transiently (streamed to OS temp, deleted after upload), AES-256-GCM encrypted, `data_hash = sha256(plaintext)`, blob written via the Walrus upload relay, AES key threshold-sealed (2-of-2 Mysten Open key servers).
-- **Owner runs the model** from the NFT (`scripts/run-agent.mjs`): Seal releases the key → Walrus `readBlob` → decrypt → verify hash → `node-llama-cpp` generates text.
-- **Non-owner denied** by `seal_approve` (incl. an authoritative `devInspect` gate proof).
-- **Kiosk sale with enforced 5% royalty** + access-follows-ownership: buyer claims ownership → buyer runs the model → seller is locked out.
-- **One-command demo**: `node scripts/demo.mjs` runs mint → run → deny → sell → new-owner run → previous-owner denied.
-
-**⚠️ Simulated / deviations (honest notes):**
-- **Nautilus is SIMULATED.** `secure_transfer` verifies an `ed25519` signature from a key registered in `EnclaveRegistry` — it is **not** a real AWS Nitro attestation (no `sui::nitro_attestation`, no PCRs). Clearly labeled in the Move source.
-- **Access gate uses a stored `owner` field, not raw object ownership.** The README's "Layer 1" pitch assumed Seal key servers enforce owned-object ownership during policy evaluation. In practice the **testnet key servers evaluate `seal_approve` via `dev_inspect`, which does *not* enforce object ownership** — but it *does* set a trustworthy `ctx.sender()` (proven by the SessionKey). So the policy gates on `nft.owner == ctx.sender()`, kept current by `claim_ownership` / `walnut_transfer` (real txs only the holder can run). Consequence: a plain `public_transfer` that bypasses these leaves the `owner` field stale until the new owner calls `claim_ownership` — which only they can. This matches the README's stated Layer-1 limitation (a prior owner loses *future* reads once the new owner claims; the strict guarantee needs the Nautilus path).
-- **`kiosk_lock_rule` omitted** (royalty rule only) so a buyer can take the item to plain ownership and run it simply; enforcing all resales-in-kiosk is a future add.
-- **zkLogin / native USDC** are not wired in this MVP (the trading demo uses SUI).
-
-### Run it
+### "Talk to your NFT" — the mechanism
+Each NFT exposes an owner-gated API. Prove ownership once (wallet signs a challenge → short-lived token), then chat:
 ```bash
-node scripts/check-env.mjs     # verify PRIV_KEY address is funded (SUI + WAL)
-node scripts/get-wal.mjs 1     # (if needed) exchange 1 SUI -> WAL for Walrus storage
-node scripts/deploy.mjs        # publish package + register simulated enclave -> walnut.config.json
-node scripts/setup-policy.mjs  # create TransferPolicy<AgentNFT> + 5% royalty rule
-node scripts/mint-model.mjs    # stream model -> encrypt -> Walrus -> mint (no local copy kept)
-node scripts/run-agent.mjs "your prompt"   # owner runs the model from the NFT
-node scripts/demo.mjs          # full end-to-end story (mint → run → deny → sell → run → deny)
-```
+# one-time: prove ownership → TEE-issued bearer token
+curl -X POST $TEE/v1/auth/challenge -d '{"nftId":"0xAGENT","address":"0xYOU"}'   # → nonce
+# sign nonce with your Sui wallet →
+curl -X POST $TEE/v1/auth/verify    -d '{"nftId":"0xAGENT","signature":"..."}'    # → token
 
-### Web app
-```bash
-npm run dev        # http://localhost:3000
+# use it (repeatable) — this runs inside the enclave
+curl -X POST $TEE/v1/agents/0xAGENT/chat -H "Authorization: Bearer <token>" \
+     -d '{"message":"summarize this..."}'   # → enclave-signed reply
 ```
-A minimal Next.js + `@mysten/dapp-kit` UI: connect wallet, view the demo agent card, **Run the agent** (shows generated text), a **non-owner denial** demo, your owned Walnut NFTs, and the Kiosk/royalty panel. Because `node-llama-cpp` and the Walrus/Seal decrypt must run in Node, the heavy work happens in server API routes (`pages/api/run.js` etc.) — the model literally comes out of the NFT's Walrus blob on each run.
+Inside the enclave: verify the token + re-check on-chain ownership → fetch the Seal key (Seal-Nautilus pattern) → **decrypt the system prompt in-TEE** → run the hosted model → return a reply **signed by the enclave key**. The plaintext prompt never leaves the TEE. `authorize_usage` issues time-boxed **renter tokens** (rent without transfer); the NFT page also shows a copy-paste curl snippet.
 
-Secrets (`PRIV_KEY`, enclave/buyer keys) live in `.env.local` / `.walnut-*.json` and are gitignored; `walnut.config.json` holds only public object IDs.
+### On-chain vs off-chain
+| On-chain (Sui) | Off-chain |
+|---|---|
+| `AgentNFT { owner, creator, model_id, walrus_blob_id, data_hash, sealed_key_ref, version }` | encrypted **config brain** on **Walrus** |
+| Move pkg: `mint · update · authorize_usage · secure_transfer(…proof) · clone` | hosted **model weights** (baked into the enclave image) |
+| **`enclave` registry** — real `sui::nitro_attestation` + pinned PCRs | **Seal** key servers (owner-gated key release) |
+| `enclave::verify_signature` gating transfer/clone/receipts | the **Nitro Enclave** (decrypt + infer + re-encrypt; signs outputs) |
+| **Kiosk + TransferPolicy** + royalty + listings | gateway on the parent EC2 (REST + token auth); plaintext prompt (TEE-only) |
+
+### Real Nautilus (no simulation)
+Built as a Nautilus app from the `seal-example` template: `move/enclave` (stock) + `move/walnut` (`seal_policy.move` + `walnut.move`) + `src/nautilus-server/src/apps/walnut` (`process_data` with `op:chat`/`op:reencrypt`, the Seal key-load handshake, `IntentMessage` signing). The enclave is built reproducibly (stable PCRs), registered on-chain via a **genuine attestation** (`update_pcrs` + `register_enclave`), and only outputs from that exact attested build are accepted on-chain. On transfer/clone, the TEE re-encrypts the brain to the new owner and `secure_transfer` verifies the attestation before ownership flips (strict ERC-7857).
+
+### Status
+- ✅ **Live & verified on testnet (foundations):** Move `AgentNFT` + `seal_approve` ownership gate, Walrus encrypt/store, Seal owner-gated decrypt (+ non-owner denial), Kiosk sale with enforced royalty where access follows ownership.
+- 🔧 **Being built (v2):** config-brain refactor, the real Nautilus `walnut` enclave app (from `seal-example`), the gateway + talk-to-your-NFT flow, `authorize_usage`/`clone`, and the mint/chat/marketplace UI. Build plan in **`PROMPT.md`**.
+- 🧰 **Your setup (AWS, manual):** provision the Nitro instance, build the EIF, register the real attestation — runbook in **`SETUP_NAUTILUS.md`**.
+
+### Honest limits
+- **Nitro Enclaves have no GPU** ⇒ in-TEE inference is **small CPU models** (SmolLM2-135M-class). Large *private* models would need a TEE-GPU provider (NVIDIA confidential computing), which isn't natively attestable on Sui — documented as an upgrade path.
+- Walrus blobs are public — privacy is entirely from encryption + Seal. Storage lifecycle is bounded by paid epochs.
+- zkLogin / native USDC are optional add-ons, not core to the MVP.
+
+Secrets (`PRIV_KEY`, keys) live in `.env.local` / gitignored files; `walnut.config.json` holds only public object IDs.
